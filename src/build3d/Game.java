@@ -22,6 +22,8 @@ public class Game {
     private static final double MOVE_SPEED = 160;   // world units / second
     private static final double RUN_MULT = 1.7;
     private static final double TURN_SPEED = 2.2;   // radians / second, keyboard turning
+    private static final double GRAVITY = 800;      // world units / second^2
+    private static final double JUMP_SPEED = 260;   // world units / second, initial upward velocity
 
     private final GameMap map;
     private final Player player = new Player();
@@ -139,7 +141,26 @@ public class Game {
 
         Sector cur = map.sectors.get(player.sector);
         double targetEyeZ = cur.floorZ + player.eyeHeightOffset;
-        player.eyeZ += (targetEyeZ - player.eyeZ) * Math.min(1.0, dt * 10.0);
+
+        if (input.isDown(KeyEvent.VK_SPACE) && player.velZ == 0 && player.eyeZ <= targetEyeZ + 0.5) {
+            player.velZ = JUMP_SPEED;
+        }
+
+        if (player.velZ != 0 || player.eyeZ > targetEyeZ + 0.5) {
+            player.velZ -= GRAVITY * dt;
+            player.eyeZ += player.velZ * dt;
+            double maxEyeZ = cur.ceilZ - (Player.HEIGHT - player.eyeHeightOffset);
+            if (player.eyeZ > maxEyeZ) {
+                player.eyeZ = maxEyeZ;
+                if (player.velZ > 0) player.velZ = 0;
+            }
+            if (player.eyeZ <= targetEyeZ) {
+                player.eyeZ = targetEyeZ;
+                player.velZ = 0;
+            }
+        } else {
+            player.eyeZ += (targetEyeZ - player.eyeZ) * Math.min(1.0, dt * 10.0);
+        }
     }
 
     private void move(double mx, double my) {

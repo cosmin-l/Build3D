@@ -38,6 +38,7 @@ or on a POSIX shell:
 - `Left` / `Right` arrows — turn without the mouse
 - `Up` / `Down` arrows — look up/down without the mouse
 - `Shift` — run
+- `Space` — jump
 - `Tab` — toggle a top-down minimap overlay
 
 ## How it works
@@ -85,8 +86,11 @@ or on a POSIX shell:
   allowed if the floor step is small (`Player.STEP_MAX`, an 8-Duke-unit-ish
   24) and the neighbor has headroom (`Player.HEIGHT`); a separate
   closest-point-on-segment push-out (`Game.resolveRadius`) keeps the player
-  `Player.RADIUS` units from solid walls. There's no gravity/falling —
-  stepping off a ledge just smoothly lowers the eye height.
+  `Player.RADIUS` units from solid walls. `Space` jumps (an initial upward
+  velocity) and gravity pulls the eye back down to the current sector's
+  floor, clamped so the player's head doesn't clip through the ceiling;
+  stepping off a ledge falls the same way once the drop is more than a
+  half-unit, while small steps (stairs) still snap up smoothly.
 - Sprites (`Sprite`) are flat-shaded camera-facing billboards, depth-tested
   per screen column against a `wallDepth[]` buffer recorded while drawing
   walls, then painted back-to-front.
