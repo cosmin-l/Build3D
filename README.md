@@ -60,9 +60,23 @@ or on a POSIX shell:
 - Looking up/down is a **y-shear** (a pixel offset added after projection),
   not a real camera pitch rotation — this is the actual technique the Build
   engine used, not an approximation of it.
-- Walls and floors/ceilings are flat-colored with cheap procedural
-  "textures" (`Textures.java`: brick, panel, stripes — just math, no image
-  assets) and distance-based darkening for a bit of depth cueing.
+- Walls and floors/ceilings can use either cheap procedural "textures"
+  (`Textures.java`: brick, panel, stripes — just math, no image assets) or
+  real image files loaded via `javax.imageio` (`ImageTexture.java`,
+  registered per map with `IMAGE id path [tileFeet]`). Floors and ceilings
+  are genuinely floor-cast: for a textured flat, each screen pixel's world
+  (x, y) is derived from its screen row via the inverse of the wall
+  projection, then sampled — not just a flat fill. Sprites can likewise
+  carry an image texture with alpha-cutout transparency instead of a solid
+  color box. Distance-based darkening applies uniformly for depth cueing.
+- **Voxel sprites** (`VoxelModel`/`VoxelLoader`/`VoxelSprite`) are a
+  Build-engine-style alternative to flat billboards: a small 3D grid of
+  colored cubes (a sparse text format, `DIM`/`SCALE`/`V x y z color`),
+  placed in the world with `VOXSPRITE x y sector baseZ yawDeg scale
+  modelId`. Each frame, every occupied voxel in view is projected and
+  depth-sorted individually and drawn as a flat-shaded screen-space square
+  (a cube "splat", not a true per-voxel raycast) — cheap, and gives correct
+  parallax/self-occlusion and rotation for prop-sized models.
 - Collision is deliberately simple: each tick, a candidate position is
   tested with a point-in-polygon check against every sector (`GameMap
   .findSector`), preferring continuity with the current sector and, when
@@ -91,12 +105,28 @@ WALL x1 y1 x2 y2 portal color [texId]
 ...
 ENDSECTOR
 
-SPRITE x y sector height color scale
+SPRITE x y sector height color scale [imageTex]
+
+IMAGE id path [tileFeet]
+VOXELMODEL id path
+VOXSPRITE x y sector baseZ yawDeg scale modelId
 ```
 
 - Colors are `0xRRGGBB`.
-- `texId` for a `WALL` is a procedural texture: `0` brick, `1` panel, `2`
-  stripes, `-1` (or omitted) flat color.
+- `texId` on a `WALL`, or `floorTex`/`ceilTex` on a `SECTOR`, selects a
+  texture: `0` brick, `1` panel, `2` stripes are the built-in procedural
+  patterns, `-1` (or omitted) is a flat color, and any other id registered
+  by an `IMAGE` line uses that image, tiled across `tileFeet` world feet
+  (default 64). `IMAGE`/`VOXELMODEL` paths, like the map path itself, are
+  resolved relative to the working directory the game is launched from.
+- `SPRITE`'s optional trailing `imageTex` selects a registered image for an
+  alpha-cutout billboard instead of a flat color box (pixels with alpha
+  < 128 are skipped).
+- `VOXELMODEL id path` loads a sparse voxel model (see `voxels/barrel.vxm`
+  for an example): a text file of `DIM sizeX sizeY sizeZ`, `SCALE
+  feetPerVoxel`, and `V x y z 0xRRGGBB` lines (unset voxels are empty).
+  `VOXSPRITE` places an instance of it in the world with a yaw (degrees)
+  and a scale multiplier on top of the model's own voxel size.
 - A `SECTOR`'s vertices are given implicitly by its `WALL` lines in order —
   wind them counter-clockwise from above, and the last wall must return to
   the first vertex.
@@ -110,7 +140,10 @@ SPRITE x y sector height color scale
 ## Known limitations / what's not here
 
 - No narrow doorways in the sample map (see above — easy to add).
-- Floors/ceilings are flat-shaded, not per-pixel textured (no floor-casting).
+- Voxel sprites are cube-splatted (projected and depth-sorted per voxel),
+  not a true per-pixel voxel raycast, and aren't depth-tested against flat
+  sprites pixel-for-pixel — only against walls. Fine for prop-sized models;
+  large models cost more per frame since every occupied voxel is projected.
 - No true room-over-room (two sectors overlapping in the *same* XY
   footprint at different heights) — sectors are choosing-by-nearest-floor
   when footprints overlap, which works for stacked-but-offset layouts but

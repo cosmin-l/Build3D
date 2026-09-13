@@ -27,6 +27,9 @@ public class Renderer {
     private final int[] topOpen;
     private final int[] bottomOpen;
     private final double[] wallDepth;
+    // Per-column world-space ray direction at unit depth, for floor/ceiling texture casting.
+    private final double[] dirX;
+    private final double[] dirY;
 
     public boolean minimapOn = false;
 
@@ -38,6 +41,8 @@ public class Renderer {
         this.topOpen = new int[width];
         this.bottomOpen = new int[width];
         this.wallDepth = new double[width];
+        this.dirX = new double[width];
+        this.dirY = new double[width];
     }
 
     public void render(int[] pixels, GameMap map, Player player) {
@@ -48,9 +53,17 @@ public class Renderer {
         java.util.Arrays.fill(wallDepth, Double.POSITIVE_INFINITY);
 
         double pitchShear = player.pitch * screenDist;
+        double cosA = Math.cos(player.angle), sinA = Math.sin(player.angle);
+        for (int x = 0; x < width; x++) {
+            double localX = (x + 0.5 - width / 2.0) / screenDist;
+            dirX[x] = cosA * localX + sinA;
+            dirY[x] = -sinA * localX + cosA;
+        }
+
         boolean[] visited = new boolean[map.sectors.size()];
         renderSector(map, player, player.sector, 0, width - 1, visited, 0, pitchShear);
         renderSprites(map, player, pitchShear);
+        renderVoxelSprites(map, player, pitchShear);
 
         if (minimapOn) drawMinimap(map, player);
     }
@@ -127,9 +140,11 @@ public class Renderer {
                 double shade = shadeFactor(camZ, sec.light);
 
                 if (!isPortal) {
-                    drawFlat(x, top, ceilY, sec.ceilColor, shade);
+                    drawCeilOrFloor(x, top, ceilY, sec.ceilZ, sec.ceilTex, sec.ceilColor, sec.light,
+                            player.x, player.y, eyeZ, pitchShear, shade);
                     drawTexturedWall(x, ceilY, floorY, w, u, eyeZ, camZ, pitchShear, shade);
-                    drawFlat(x, floorY, bot, sec.floorColor, shade);
+                    drawCeilOrFloor(x, floorY, bot, sec.floorZ, sec.floorTex, sec.floorColor, sec.light,
+                            player.x, player.y, eyeZ, pitchShear, shade);
                     wallDepth[x] = Math.min(wallDepth[x], camZ);
                     topOpen[x] = bot;
                 } else {
@@ -138,7 +153,8 @@ public class Renderer {
                     int openTop = Math.max(ceilY, nCeilY);
                     int openBottom = Math.min(floorY, nFloorY);
 
-                    drawFlat(x, top, ceilY, sec.ceilColor, shade);
+                    drawCeilOrFloor(x, top, ceilY, sec.ceilZ, sec.ceilTex, sec.ceilColor, sec.light,
+                            player.x, player.y, eyeZ, pitchShear, shade);
                     if (openTop > ceilY) {
                         drawTexturedWall(x, ceilY, openTop, w, u, eyeZ, camZ, pitchShear, shade);
                         wallDepth[x] = Math.min(wallDepth[x], camZ);
@@ -147,7 +163,8 @@ public class Renderer {
                         drawTexturedWall(x, openBottom, floorY, w, u, eyeZ, camZ, pitchShear, shade);
                         wallDepth[x] = Math.min(wallDepth[x], camZ);
                     }
-                    drawFlat(x, floorY, bot, sec.floorColor, shade);
+                    drawCeilOrFloor(x, floorY, bot, sec.floorZ, sec.floorTex, sec.floorColor, sec.light,
+                            player.x, player.y, eyeZ, pitchShear, shade);
 
                     topOpen[x] = openTop;
                     bottomOpen[x] = openBottom;
@@ -168,6 +185,36 @@ public class Renderer {
         for (int y = y0; y < y1; y++) {
             double worldZ = eyeZ - (y - height / 2.0 - pitchShear) * camZ / screenDist;
             int color = w.textureId >= 0 ? Textures.sampleWall(w.textureId, u, worldZ, w.color) : w.color;
+            pixels[y * width + x] = shadeColor(color, shade);
+        }
+    }
+
+    /** Draws a ceiling or floor span: per-pixel floor-cast when a texture is set, a flat fill otherwise. */
+    private void drawCeilOrFloor(int x, int y0, int y1, double worldZ, int texId, int color,
+                                  double sectorLight, double px, double py, double eyeZ,
+                                  double pitchShear, double flatShade) {
+        if (texId >= 0) {
+            drawTexturedFlat(x, y0, y1, worldZ, texId, color, dirX[x], dirY[x], px, py, eyeZ, pitchShear, sectorLight);
+        } else {
+            drawFlat(x, y0, y1, color, flatShade);
+        }
+    }
+
+    private void drawTexturedFlat(int x, int y0, int y1, double worldZ, int texId, int baseColor,
+                                   double dx, double dy, double px, double py, double eyeZ,
+                                   double pitchShear, double sectorLight) {
+        if (y0 >= y1) return;
+        y0 = Math.max(0, y0);
+        y1 = Math.min(height, y1);
+        for (int y = y0; y < y1; y++) {
+            double denom = height / 2.0 - y + pitchShear;
+            if (Math.abs(denom) < 1e-6) continue;
+            double camZ = (worldZ - eyeZ) * screenDist / denom;
+            if (camZ <= 0) continue;
+            double wx = px + dx * camZ;
+            double wy = py + dy * camZ;
+            double shade = shadeFactor(camZ, sectorLight);
+            int color = Textures.sampleWall(texId, wx, wy, baseColor);
             pixels[y * width + x] = shadeColor(color, shade);
         }
     }
@@ -218,12 +265,118 @@ public class Renderer {
             int botY = worldToScreenY(s.baseZ, player.eyeZ, cz, pitchShear);
             double shade = shadeFactor(cz, 1.0);
             int shaded = shadeColor(s.color, shade);
+            boolean textured = s.imageTex >= 0;
+            int y0 = Math.max(0, topY), y1 = Math.min(height, botY);
+            if (y0 >= y1) continue;
+            double spanW = Math.max(1e-6, (sx + halfWpx) - (sx - halfWpx));
 
             for (int x = xStart; x <= xEnd; x++) {
                 if (cz >= wallDepth[x]) continue;
-                int y0 = Math.max(0, topY);
-                int y1 = Math.min(height, botY);
-                for (int y = y0; y < y1; y++) pixels[y * width + x] = shaded;
+                double u = (x + 0.5 - (sx - halfWpx)) / spanW;
+                for (int y = y0; y < y1; y++) {
+                    int color;
+                    if (textured) {
+                        double v = (double) (y - topY) / Math.max(1, botY - topY);
+                        int argb = Textures.sampleSpriteARGB(s.imageTex, u, v);
+                        if (argb == -1) {
+                            color = shaded;
+                        } else {
+                            int alpha = (argb >>> 24) & 0xFF;
+                            if (alpha < 128) continue; // transparent cutout
+                            color = shadeColor(argb & 0xFFFFFF, shade);
+                        }
+                    } else {
+                        color = shaded;
+                    }
+                    pixels[y * width + x] = color;
+                }
+            }
+        }
+    }
+
+    /**
+     * Renders VoxelSprites: each occupied voxel is projected and depth-sorted
+     * individually (a point/cube splat, not a true per-pixel voxel raycast),
+     * then drawn as a flat-shaded screen-space square, occluded by walls via
+     * the wallDepth buffer. Cheap and gives correct parallax/self-occlusion
+     * for the small prop-sized models this engine expects.
+     */
+    private void renderVoxelSprites(GameMap map, Player player, double pitchShear) {
+        double cosA = Math.cos(player.angle), sinA = Math.sin(player.angle);
+
+        for (VoxelSprite vs : map.voxelSprites) {
+            double ddx = vs.x - player.x, ddy = vs.y - player.y;
+            if (ddx * ddx + ddy * ddy > FOG_DIST * FOG_DIST) continue;
+
+            VoxelModel m = vs.model;
+            double vsize = m.voxelSize * vs.scale;
+            double halfW = m.sizeX * vsize / 2.0;
+            double halfD = m.sizeY * vsize / 2.0;
+            double cosY = Math.cos(vs.yaw), sinY = Math.sin(vs.yaw);
+
+            int cap = m.sizeX * m.sizeY * m.sizeZ;
+            double[] cxs = new double[cap];
+            double[] czs = new double[cap];
+            double[] wzs = new double[cap];
+            int[] cols = new int[cap];
+            int count = 0;
+
+            for (int iz = 0; iz < m.sizeZ; iz++) {
+                for (int iy = 0; iy < m.sizeY; iy++) {
+                    for (int ix = 0; ix < m.sizeX; ix++) {
+                        int rgb = m.get(ix, iy, iz);
+                        if (rgb == -1) continue;
+
+                        double lx = (ix + 0.5) * vsize - halfW;
+                        double ly = (iy + 0.5) * vsize - halfD;
+                        double lz = (iz + 0.5) * vsize;
+                        double rx = lx * cosY - ly * sinY;
+                        double ry = lx * sinY + ly * cosY;
+                        double wx = vs.x + rx, wy = vs.y + ry;
+                        double wz = vs.baseZ + lz;
+
+                        double relX = wx - player.x, relY = wy - player.y;
+                        double cx = relX * cosA - relY * sinA;
+                        double cz = relX * sinA + relY * cosA;
+                        if (cz < 0.2) continue;
+
+                        cxs[count] = cx;
+                        czs[count] = cz;
+                        wzs[count] = wz;
+                        cols[count] = rgb;
+                        count++;
+                    }
+                }
+            }
+            if (count == 0) continue;
+
+            Integer[] order = new Integer[count];
+            for (int i = 0; i < count; i++) order[i] = i;
+            java.util.Arrays.sort(order, (a, b) -> Double.compare(czs[b], czs[a]));
+
+            for (int oi : order) {
+                double cx = cxs[oi], cz = czs[oi], wz = wzs[oi];
+                double sx = width / 2.0 + (cx / cz) * screenDist;
+                double halfPx = Math.max(0.6, (vsize * 0.5 / cz) * screenDist);
+                int xStart = (int) Math.floor(sx - halfPx);
+                int xEnd = (int) Math.ceil(sx + halfPx);
+                if (xEnd < 0 || xStart >= width) continue;
+                xStart = Math.max(0, xStart);
+                xEnd = Math.min(width - 1, xEnd);
+
+                int topY = worldToScreenY(wz + vsize / 2.0, player.eyeZ, cz, pitchShear);
+                int botY = worldToScreenY(wz - vsize / 2.0, player.eyeZ, cz, pitchShear);
+                int y0 = Math.max(0, topY), y1 = Math.min(height, botY);
+                if (y0 >= y1) continue;
+
+                double shade = shadeFactor(cz, 1.0);
+                int shaded = shadeColor(cols[oi], shade);
+
+                for (int x = xStart; x <= xEnd; x++) {
+                    if (cz >= wallDepth[x]) continue;
+                    int base = y0 * width + x;
+                    for (int y = y0; y < y1; y++) pixels[base + (y - y0) * width] = shaded;
+                }
             }
         }
     }

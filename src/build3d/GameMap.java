@@ -1,11 +1,15 @@
 package build3d;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 public class GameMap {
     public List<Sector> sectors = new ArrayList<>();
     public List<Sprite> sprites = new ArrayList<>();
+    public List<VoxelSprite> voxelSprites = new ArrayList<>();
+    public Map<Integer, VoxelModel> voxelModels = new HashMap<>();
     public double startX, startY, startAngleDeg;
     public double startEyeHeight = 41;
     public int startSector;
