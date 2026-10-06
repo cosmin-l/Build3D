@@ -8,6 +8,7 @@ public class Player {
     public double eyeHeightOffset = 41;
     public double eyeZ; // absolute world Z of the eye, smoothed toward sector floor + offset
     public double velZ = 0; // vertical velocity, world units/sec, while jumping/falling; 0 when grounded
+    public final WeaponSystem weapons = new WeaponSystem();
 
     public static final double HEIGHT = 56;
     public static final double RADIUS = 16;

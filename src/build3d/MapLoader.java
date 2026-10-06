@@ -20,6 +20,8 @@ import java.util.Map;
  *   IMAGE id path [tileFeet]
  *   VOXELMODEL id path
  *   VOXSPRITE x y sector baseZ yawDeg scale modelId
+ *   PICKUP x y sector WEAPONNAME [amount]        grants the weapon (+ammo) on contact
+ *   PICKUP x y sector AMMO WEAPONNAME amount      grants ammo only (weapon need not be owned yet)
  *
  * Colors are 0xRRGGBB. Wall vertices of a sector must be listed in order
  * (they form a closed polygon; the last wall should return to the first
@@ -123,6 +125,22 @@ public class MapLoader {
                     VoxelModel model = map.voxelModels.get(modelId);
                     if (model == null) throw new IllegalStateException("VOXSPRITE references unknown model id " + modelId);
                     map.voxelSprites.add(new VoxelSprite(x, y, sector, baseZ, Math.toRadians(yawDeg), scale, model));
+                    break;
+                }
+
+                case "PICKUP": {
+                    double x = Double.parseDouble(t[1]);
+                    double y = Double.parseDouble(t[2]);
+                    int sector = Integer.parseInt(t[3]);
+                    if (t[4].equals("AMMO")) {
+                        WeaponType w = WeaponType.valueOf(t[5]);
+                        int amount = Integer.parseInt(t[6]);
+                        map.pickups.add(new Pickup(x, y, sector, Pickup.Kind.AMMO, w, amount));
+                    } else {
+                        WeaponType w = WeaponType.valueOf(t[4]);
+                        int amount = t.length > 5 ? Integer.parseInt(t[5]) : w.defaultPickupAmmo;
+                        map.pickups.add(new Pickup(x, y, sector, Pickup.Kind.WEAPON, w, amount));
+                    }
                     break;
                 }
 

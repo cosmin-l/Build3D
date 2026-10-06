@@ -9,6 +9,7 @@ public class GameMap {
     public List<Sector> sectors = new ArrayList<>();
     public List<Sprite> sprites = new ArrayList<>();
     public List<VoxelSprite> voxelSprites = new ArrayList<>();
+    public List<Pickup> pickups = new ArrayList<>();
     public Map<Integer, VoxelModel> voxelModels = new HashMap<>();
     public double startX, startY, startAngleDeg;
     public double startEyeHeight = 41;
@@ -37,5 +38,47 @@ public class GameMap {
             }
         }
         return best;
+    }
+
+    /**
+     * Marches a ray in small steps from (x, y) in {@code sector} along
+     * {@code angle} (same convention as Player.angle) until it exits every
+     * sector's polygon (a wall hit) or reaches {@code maxDist}. Ignores
+     * floor/ceiling height -- good enough for hitscan weapon sparks, which
+     * this engine has no enemies to need better for.
+     */
+    public RaycastHit raycast(double x, double y, int sector, double angle, double maxDist) {
+        double dx = Math.sin(angle), dy = Math.cos(angle);
+        double step = 3.0;
+        double px = x, py = y;
+        int sec = sector;
+        double traveled = 0;
+        while (traveled < maxDist) {
+            double nx = px + dx * step, ny = py + dy * step;
+            int found = -1;
+            if (sec >= 0 && sec < sectors.size() && sectors.get(sec).contains(nx, ny)) {
+                found = sec;
+            } else {
+                for (int i = 0; i < sectors.size(); i++) {
+                    if (sectors.get(i).contains(nx, ny)) { found = i; break; }
+                }
+            }
+            if (found < 0) return new RaycastHit(px, py, sec, traveled);
+            px = nx; py = ny; sec = found; traveled += step;
+        }
+        return new RaycastHit(px, py, sec, traveled);
+    }
+
+    public static class RaycastHit {
+        public final double x, y;
+        public final int sector;
+        public final double dist;
+
+        public RaycastHit(double x, double y, int sector, double dist) {
+            this.x = x;
+            this.y = y;
+            this.sector = sector;
+            this.dist = dist;
+        }
     }
 }

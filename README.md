@@ -40,6 +40,8 @@ or on a POSIX shell:
 - `Shift` — run
 - `Space` — jump
 - `Tab` — toggle a top-down minimap overlay
+- `1`-`6` / mouse wheel — switch weapon (only among weapons you've picked up)
+- Left mouse button — fire the current weapon (hold for full-auto weapons)
 
 ## How it works
 
@@ -94,6 +96,29 @@ or on a POSIX shell:
 - Sprites (`Sprite`) are flat-shaded camera-facing billboards, depth-tested
   per screen column against a `wallDepth[]` buffer recorded while drawing
   walls, then painted back-to-front.
+- **Weapons** (`WeaponType`/`WeaponSystem`/`WeaponRenderer`) are a
+  retro-FPS arsenal in look, feel, and functionality: Mighty Foot, Pistol,
+  Shotgun, Chaingun Cannon, RPG, and Devastator, picked with `1`-`6` or the
+  mouse wheel. The sounds aren't ours to ship, and neither is Duke 3D's own
+  art, so the viewmodel sprites (idle/fire/pump/reload frames, blitted with
+  nearest-neighbor scaling, no anti-aliasing) are real pixel art sourced
+  from the Freedoom project's BSD-licensed Doom sprite replacements (see
+  `textures/weapons/FREEDOOM_LICENSE.txt`) -- Devastator borrows Doom's
+  Super Shotgun for its twin-barrel look. The *behavior* matches Duke's
+  feel closely regardless: the chaingun and devastator spin up before
+  reaching full rate, the shotgun pumps between shots, the pistol
+  auto-reloads after a 12-round clip, running out of ammo auto-switches to
+  the next-best owned weapon, and picking up a weapon for the first time
+  shows a Duke-style "Got the ...!" message. Pistol/shotgun/chaingun fire
+  are hitscans (a `GameMap.raycast` march through sectors/portals) that
+  spawn a spark where they hit; RPG/Devastator rockets are real projectiles
+  (`Projectile`) that fly through the sector/portal geometry and explode
+  (with a screen shake if you're close) on hitting a wall, floor, or
+  ceiling. Explosions, sparks, and smoke (`Effect`) are short-lived dynamic
+  billboards merged into the normal sprite-rendering pass each frame, so
+  they're depth-tested against walls for free. Weapon/ammo pickups
+  (`Pickup`, a `PICKUP` map directive) sit in the world and are collected
+  by walking within radius of them.
 
 ## Map format
 
@@ -114,6 +139,9 @@ SPRITE x y sector height color scale [imageTex]
 IMAGE id path [tileFeet]
 VOXELMODEL id path
 VOXSPRITE x y sector baseZ yawDeg scale modelId
+
+PICKUP x y sector WEAPONNAME [amount]
+PICKUP x y sector AMMO WEAPONNAME amount
 ```
 
 - Colors are `0xRRGGBB`.
@@ -131,6 +159,11 @@ VOXSPRITE x y sector baseZ yawDeg scale modelId
   feetPerVoxel`, and `V x y z 0xRRGGBB` lines (unset voxels are empty).
   `VOXSPRITE` places an instance of it in the world with a yaw (degrees)
   and a scale multiplier on top of the model's own voxel size.
+- `PICKUP` places a weapon or ammo item at a point; `WEAPONNAME` is one of
+  the `WeaponType` enum names (`FOOT`, `PISTOL`, `SHOTGUN`, `CHAINGUN`,
+  `RPG`, `DEVASTATOR`). The first form unlocks that
+  weapon (plus `amount` ammo, or the weapon's own default if omitted); the
+  `AMMO` form just tops up ammo for a weapon, owned or not.
 - A `SECTOR`'s vertices are given implicitly by its `WALL` lines in order —
   wind them counter-clockwise from above, and the last wall must return to
   the first vertex.
@@ -152,4 +185,8 @@ VOXSPRITE x y sector baseZ yawDeg scale modelId
   footprint at different heights) — sectors are choosing-by-nearest-floor
   when footprints overlap, which works for stacked-but-offset layouts but
   isn't a full Build-style "TROR" implementation.
-- No enemies/weapons/game logic — this is the engine, not a game.
+- No enemies, so hitscan weapons and explosions have nothing to damage
+  (sparks/flashes and screen shake still play). Only six weapons are
+  implemented (Mighty Foot, Pistol, Shotgun, Chaingun Cannon, RPG,
+  Devastator) — no Pipe Bomb, Shrinker, Tripbomb, or Freezethrower — and no
+  sound at all; this engine has no audio subsystem yet.

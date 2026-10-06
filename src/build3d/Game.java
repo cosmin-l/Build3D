@@ -8,9 +8,14 @@ import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.event.KeyEvent;
+import java.awt.event.MouseEvent;
 import java.awt.image.BufferStrategy;
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferInt;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Random;
 import javax.swing.JFrame;
 
 public class Game {
@@ -28,8 +33,13 @@ public class Game {
     private final GameMap map;
     private final Player player = new Player();
     private final Renderer renderer = new Renderer(RENDER_W, RENDER_H, FOV_DEG);
+    private final WeaponRenderer weaponRenderer = new WeaponRenderer();
     private final BufferedImage frame;
     private final int[] pixels;
+    private final Random rng = new Random();
+    private final List<Projectile> projectiles = new ArrayList<>();
+    private final List<Effect> effects = new ArrayList<>();
+    private double screenShake = 0;
 
     private JFrame window;
     private Canvas canvas;
@@ -64,6 +74,7 @@ public class Game {
         canvas.addKeyListener(input);
         canvas.addMouseMotionListener(input);
         canvas.addMouseListener(input);
+        canvas.addMouseWheelListener(input);
         canvas.setFocusable(true);
         canvas.requestFocus();
 
@@ -93,7 +104,7 @@ public class Game {
                 accumulator -= dt;
             }
 
-            renderer.render(pixels, map, player);
+            renderer.render(pixels, map, player, buildDynamicSprites());
 
             frames++;
             if (now - fpsTimer >= 1_000_000_000L) {
@@ -161,6 +172,200 @@ public class Game {
         } else {
             player.eyeZ += (targetEyeZ - player.eyeZ) * Math.min(1.0, dt * 10.0);
         }
+
+        boolean moving = len > 1e-6;
+        double bobFrac = moving ? (input.isDown(KeyEvent.VK_SHIFT) ? 1.4 : 1.0) : 0.0;
+        handleWeaponInput(dt);
+        player.weapons.update(dt, moving, bobFrac);
+        updateProjectiles(dt);
+        updateEffects(dt);
+        updatePickups();
+        screenShake *= Math.exp(-dt * 6);
+    }
+
+    private void handleWeaponInput(double dt) {
+        WeaponSystem ws = player.weapons;
+        WeaponType[] order = WeaponType.values();
+        int[] numKeys = { KeyEvent.VK_1, KeyEvent.VK_2, KeyEvent.VK_3, KeyEvent.VK_4,
+                KeyEvent.VK_5, KeyEvent.VK_6 };
+        for (int i = 0; i < numKeys.length && i < order.length; i++) {
+            if (input.isDown(numKeys[i]) && ws.owned.contains(order[i])) ws.startSwitch(order[i]);
+        }
+
+        int wheel = input.consumeWheel();
+        if (wheel > 0) ws.cycle(1);
+        else if (wheel < 0) ws.cycle(-1);
+
+        boolean leftHeld = input.isCaptured() && input.isMouseDown(MouseEvent.BUTTON1);
+
+        boolean continuous = ws.current == WeaponType.CHAINGUN || ws.current == WeaponType.DEVASTATOR;
+        if (continuous && leftHeld && !ws.isSwitching()) {
+            ws.chainSpin = Math.min(1, ws.chainSpin + dt / 0.35);
+        } else {
+            ws.chainSpin = Math.max(0, ws.chainSpin - dt / 0.5);
+        }
+
+        if (leftHeld && ws.canFire()) fireWeapon(ws.current);
+    }
+
+    private void fireWeapon(WeaponType wt) {
+        WeaponSystem ws = player.weapons;
+        ws.consumeAmmo(wt.ammoPerShot);
+        ws.recoil = 1.0;
+        double interval = wt.fireInterval;
+
+        switch (wt) {
+            case FOOT:
+                spawnMeleeSwipe();
+                break;
+            case PISTOL:
+                ws.pistolClipCount++;
+                fireHitscan(5.5);
+                if (ws.pistolClipCount >= 12) {
+                    ws.pistolClipCount = 0;
+                    ws.reloadT = 0.55;
+                }
+                break;
+            case SHOTGUN:
+                for (int i = 0; i < 7; i++) fireHitscan(10.0);
+                ws.pumpT = 0.35;
+                break;
+            case CHAINGUN:
+                fireHitscan(4.5);
+                ws.altBarrel = !ws.altBarrel;
+                interval = lerp(wt.fireInterval * 2.4, wt.fireInterval, ws.chainSpin);
+                break;
+            case RPG:
+                spawnProjectile(Projectile.Kind.ROCKET, wt.projectileSpeed);
+                break;
+            case DEVASTATOR:
+                spawnProjectile(Projectile.Kind.DEVASTATOR_ROCKET, wt.projectileSpeed);
+                ws.altBarrel = !ws.altBarrel;
+                interval = lerp(wt.fireInterval * 2.0, wt.fireInterval, ws.chainSpin);
+                break;
+        }
+
+        ws.fireCooldown = interval;
+        if (wt != WeaponType.FOOT && ws.ammo(wt) <= 0) autoSwitchAfterEmpty();
+    }
+
+    private void autoSwitchAfterEmpty() {
+        WeaponType[] priority = { WeaponType.DEVASTATOR, WeaponType.RPG,
+                WeaponType.CHAINGUN, WeaponType.SHOTGUN, WeaponType.PISTOL, WeaponType.FOOT };
+        for (WeaponType w : priority) {
+            if (player.weapons.owned.contains(w) && (w == WeaponType.FOOT || player.weapons.ammo(w) > 0)) {
+                player.weapons.startSwitch(w);
+                return;
+            }
+        }
+    }
+
+    private void fireHitscan(double spreadDeg) {
+        double spread = Math.toRadians(spreadDeg) * (rng.nextDouble() * 2 - 1);
+        double ang = player.angle + spread;
+        GameMap.RaycastHit hit = map.raycast(player.x, player.y, player.sector, ang, 1400);
+        effects.add(new Effect(hit.x, hit.y, player.eyeZ - 4, hit.sector, 0.18, Effect.Kind.SPARK));
+    }
+
+    private void spawnProjectile(Projectile.Kind kind, double speed) {
+        double dx = player.forwardX(), dy = player.forwardY();
+        double z = player.eyeZ - 8;
+        projectiles.add(new Projectile(player.x + dx * 20, player.y + dy * 20, z,
+                dx * speed, dy * speed, 0, player.sector, kind));
+    }
+
+    private void spawnMeleeSwipe() {
+        double dx = player.forwardX(), dy = player.forwardY();
+        effects.add(new Effect(player.x + dx * 26, player.y + dy * 26, player.eyeZ - 10, player.sector, 0.15, Effect.Kind.SPARK));
+    }
+
+    private void explode(double x, double y, double z, int sector) {
+        effects.add(new Effect(x, y, z, sector, 0.5, Effect.Kind.EXPLOSION));
+        effects.add(new Effect(x, y, z, sector, 1.0, Effect.Kind.SMOKE));
+        double d = Math.hypot(x - player.x, y - player.y);
+        if (d < 260) screenShake = Math.max(screenShake, 1.0 - d / 260);
+    }
+
+    private void updateProjectiles(double dt) {
+        Iterator<Projectile> it = projectiles.iterator();
+        while (it.hasNext()) {
+            Projectile p = it.next();
+            p.life -= dt;
+
+            double nx = p.x + p.vx * dt, ny = p.y + p.vy * dt, nz = p.z + p.vz * dt;
+            Sector sec = map.sectors.get(p.sector);
+            int newSector = map.findSector(nx, ny, p.sector, sec.floorZ);
+            boolean hitWall = newSector < 0;
+            Sector checkSec = hitWall ? sec : map.sectors.get(newSector);
+            boolean hitFloor = nz <= checkSec.floorZ + 2;
+            boolean hitCeil = nz >= checkSec.ceilZ - 2;
+
+            if (hitWall || hitFloor || hitCeil || p.life <= 0) {
+                explode(p.x, p.y, p.z, p.sector);
+                it.remove();
+                continue;
+            }
+            p.x = nx; p.y = ny; p.z = nz; p.sector = newSector;
+        }
+    }
+
+    private void updateEffects(double dt) {
+        Iterator<Effect> it = effects.iterator();
+        while (it.hasNext()) {
+            Effect e = it.next();
+            e.age += dt;
+            if (e.age >= e.ttl) it.remove();
+        }
+    }
+
+    private void updatePickups() {
+        for (Pickup pk : map.pickups) {
+            if (pk.taken || pk.sector != player.sector) continue;
+            double d = Math.hypot(pk.x - player.x, pk.y - player.y);
+            if (d < 28) {
+                pk.taken = true;
+                if (pk.kind == Pickup.Kind.WEAPON) player.weapons.pickupWeapon(pk.weapon, pk.amount);
+                else player.weapons.pickupAmmo(pk.weapon, pk.amount);
+            }
+        }
+    }
+
+    private List<Sprite> buildDynamicSprites() {
+        List<Sprite> list = new ArrayList<>();
+        for (Projectile p : projectiles) {
+            int color = p.kind == Projectile.Kind.DEVASTATOR_ROCKET ? 0xd0d0d0 : 0x4a6b2a;
+            list.add(new Sprite(p.x, p.y, p.sector, p.z - 4, color, 0.45));
+        }
+        for (Effect e : effects) {
+            double t = e.progress();
+            int color;
+            double scale;
+            switch (e.kind) {
+                case EXPLOSION:
+                    color = lerpColor(0xffffcc, 0xff5500, t);
+                    scale = lerp(0.3, 1.6, t);
+                    break;
+                case SMOKE:
+                    color = Textures.darken(0x555555, 1.0 - t * 0.6);
+                    scale = lerp(0.6, 1.4, t);
+                    break;
+                default: // SPARK
+                    color = lerpColor(0xffffee, 0xff8800, t);
+                    scale = lerp(0.22, 0.05, t);
+                    break;
+            }
+            list.add(new Sprite(e.x, e.y, e.sector, e.z - 4, color, Math.max(0.03, scale)));
+        }
+        return list;
+    }
+
+    private static double lerp(double a, double b, double t) { return a + (b - a) * t; }
+
+    private static int lerpColor(int a, int b, double t) {
+        int ar = (a >> 16) & 0xFF, ag = (a >> 8) & 0xFF, ab = a & 0xFF;
+        int br = (b >> 16) & 0xFF, bg = (b >> 8) & 0xFF, bb = b & 0xFF;
+        int r = (int) (ar + (br - ar) * t), g = (int) (ag + (bg - ag) * t), bl = (int) (ab + (bb - ab) * t);
+        return (r << 16) | (g << 8) | bl;
     }
 
     private void move(double mx, double my) {
@@ -243,14 +448,21 @@ public class Game {
             Graphics2D g2 = (Graphics2D) g;
             g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
                     RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+            if (screenShake > 0.01) {
+                double mag = screenShake * 10;
+                g2.translate((rng.nextDouble() * 2 - 1) * mag, (rng.nextDouble() * 2 - 1) * mag);
+            }
             g2.drawImage(frame, 0, 0, WINDOW_W, WINDOW_H, null);
+
+            weaponRenderer.drawViewmodel(g2, WINDOW_W, WINDOW_H, player.weapons);
+            weaponRenderer.drawHud(g2, WINDOW_W, WINDOW_H, player.weapons);
 
             g2.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 14));
             g2.setColor(Color.GREEN);
             g2.drawString("FPS: " + fps, 10, WINDOW_H - 50);
             g2.setColor(Color.LIGHT_GRAY);
             String status = input.isCaptured()
-                    ? "Mouse captured -- WASD move, Shift run, Esc release, Tab map"
+                    ? "Mouse captured -- WASD move, Shift run, LMB fire, 1-6/wheel switch, Esc release, Tab map"
                     : "Click window to capture mouse -- WASD/arrows move, Tab map";
             g2.drawString(status, 10, WINDOW_H - 30);
         } finally {

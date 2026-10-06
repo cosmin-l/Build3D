@@ -104,3 +104,10 @@ SPRITE 300 60 0 20 0xffcc44 0.7 6
 # voxel-sprite barrel props (Build-engine-style voxel model)
 VOXSPRITE 100 250 0 0 0 1.0 0
 VOXSPRITE 750 150 2 0 40 1.2 0
+
+# weapon and ammo pickups (Duke-style "Got the ___!" on contact)
+PICKUP 50 200 0 SHOTGUN
+PICKUP 850 60 2 CHAINGUN
+PICKUP 100 650 7 RPG
+PICKUP 300 650 7 DEVASTATOR
+PICKUP 550 250 1 AMMO PISTOL 24

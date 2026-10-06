@@ -10,19 +10,23 @@ import java.awt.event.KeyListener;
 import java.awt.event.MouseEvent;
 import java.awt.event.MouseListener;
 import java.awt.event.MouseMotionListener;
+import java.awt.event.MouseWheelEvent;
+import java.awt.event.MouseWheelListener;
 import java.awt.image.BufferedImage;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
 
-public class Input implements KeyListener, MouseMotionListener, MouseListener {
+public class Input implements KeyListener, MouseMotionListener, MouseListener, MouseWheelListener {
     public static final double MOUSE_SENS = 0.0022;
 
     private final Set<Integer> keys = Collections.synchronizedSet(new HashSet<>());
+    private final Set<Integer> mouseButtons = Collections.synchronizedSet(new HashSet<>());
     private final Component target;
     private Robot robot;
     private volatile boolean captured = false;
     private volatile boolean centering = false;
+    private volatile int wheelDelta = 0;
 
     public volatile double yawDelta = 0;
     public volatile double pitchDelta = 0;
@@ -38,6 +42,14 @@ public class Input implements KeyListener, MouseMotionListener, MouseListener {
 
     public boolean isDown(int keyCode) { return keys.contains(keyCode); }
     public boolean isCaptured() { return captured; }
+    public boolean isMouseDown(int button) { return mouseButtons.contains(button); }
+
+    /** Returns the accumulated wheel rotation since the last call and resets it to 0. */
+    public int consumeWheel() {
+        int w = wheelDelta;
+        wheelDelta = 0;
+        return w;
+    }
 
     public void setCaptured(boolean c) {
         captured = c;
@@ -79,11 +91,18 @@ public class Input implements KeyListener, MouseMotionListener, MouseListener {
         }
     }
 
-    @Override public void mouseClicked(MouseEvent e) { if (!captured) setCaptured(true); }
-    @Override public void mousePressed(MouseEvent e) {}
-    @Override public void mouseReleased(MouseEvent e) {}
+    @Override public void mouseClicked(MouseEvent e) {}
+    @Override public void mousePressed(MouseEvent e) {
+        boolean wasCaptured = captured;
+        if (!captured) setCaptured(true);
+        // The click that captures the mouse is a focus click, not a shot -- only
+        // register it as a held button if we were already captured beforehand.
+        if (wasCaptured) mouseButtons.add(e.getButton());
+    }
+    @Override public void mouseReleased(MouseEvent e) { mouseButtons.remove(e.getButton()); }
     @Override public void mouseEntered(MouseEvent e) {}
     @Override public void mouseExited(MouseEvent e) {}
+    @Override public void mouseWheelMoved(MouseWheelEvent e) { wheelDelta += e.getWheelRotation(); }
 
     @Override public void keyPressed(KeyEvent e) {
         keys.add(e.getKeyCode());

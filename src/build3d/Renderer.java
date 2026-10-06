@@ -1,5 +1,6 @@
 package build3d;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -45,7 +46,7 @@ public class Renderer {
         this.dirY = new double[width];
     }
 
-    public void render(int[] pixels, GameMap map, Player player) {
+    public void render(int[] pixels, GameMap map, Player player, List<Sprite> extraSprites) {
         this.pixels = pixels;
         java.util.Arrays.fill(pixels, 0x05050a);
         java.util.Arrays.fill(topOpen, 0);
@@ -62,7 +63,13 @@ public class Renderer {
 
         boolean[] visited = new boolean[map.sectors.size()];
         renderSector(map, player, player.sector, 0, width - 1, visited, 0, pitchShear);
-        renderSprites(map, player, pitchShear);
+
+        List<Sprite> allSprites = map.sprites;
+        if (extraSprites != null && !extraSprites.isEmpty()) {
+            allSprites = new ArrayList<>(map.sprites);
+            allSprites.addAll(extraSprites);
+        }
+        renderSprites(allSprites, player, pitchShear);
         renderVoxelSprites(map, player, pitchShear);
 
         if (minimapOn) drawMinimap(map, player);
@@ -228,8 +235,7 @@ public class Renderer {
         for (int y = y0; y < y1; y++) pixels[base + (y - y0) * width] = shaded;
     }
 
-    private void renderSprites(GameMap map, Player player, double pitchShear) {
-        List<Sprite> sprites = map.sprites;
+    private void renderSprites(List<Sprite> sprites, Player player, double pitchShear) {
         double cosA = Math.cos(player.angle), sinA = Math.sin(player.angle);
 
         // Painter's algorithm back-to-front for sprite/sprite overlap; walls are
