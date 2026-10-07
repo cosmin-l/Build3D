@@ -1,8 +1,8 @@
 package build3d;
 
-/** A short-lived world-space visual: bullet spark, explosion flash, smoke, or a rocket's smoke-trail puff. */
+/** A short-lived world-space visual: bullet spark or explosion flash (smoke lives in {@link Smoke}). */
 public class Effect {
-    public enum Kind { SPARK, SMOKE, EXPLOSION, TRAIL }
+    public enum Kind { SPARK, EXPLOSION }
 
     public final double x, y, z;
     public final int sector;

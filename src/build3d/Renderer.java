@@ -47,7 +47,7 @@ public class Renderer {
     }
 
     public void render(int[] pixels, GameMap map, Player player, List<Sprite> extraSprites,
-                       List<VoxelSprite> extraVoxels) {
+                       List<VoxelSprite> extraVoxels, List<Smoke> smoke) {
         this.pixels = pixels;
         java.util.Arrays.fill(pixels, 0x05050a);
         java.util.Arrays.fill(topOpen, 0);
@@ -74,8 +74,76 @@ public class Renderer {
         List<VoxelSprite> allVoxels = new ArrayList<>(map.voxelSprites);
         if (extraVoxels != null) allVoxels.addAll(extraVoxels);
         renderVoxelSprites(allVoxels, player, pitchShear);
+        if (smoke != null && !smoke.isEmpty()) renderSmoke(smoke, player, pitchShear);
 
         if (minimapOn) drawMinimap(map, player);
+    }
+
+    /**
+     * Draws smoke puffs far-to-near as translucent round blobs: alpha falls off
+     * smoothly toward the rim and is modulated by a cheap per-puff noise so the
+     * edge looks lumpy instead of a perfect disc. Occluded by walls through
+     * wallDepth. Drawn last, so it blends over everything already on screen.
+     */
+    private void renderSmoke(List<Smoke> puffs, Player player, double pitchShear) {
+        double cosA = Math.cos(player.angle), sinA = Math.sin(player.angle);
+        int n = puffs.size();
+        double[] depth = new double[n];
+        Integer[] order = new Integer[n];
+        for (int i = 0; i < n; i++) {
+            Smoke s = puffs.get(i);
+            depth[i] = (s.x - player.x) * sinA + (s.y - player.y) * cosA;
+            order[i] = i;
+        }
+        java.util.Arrays.sort(order, (a, b) -> Double.compare(depth[b], depth[a]));
+
+        for (int i : order) {
+            Smoke s = puffs.get(i);
+            double cz = depth[i];
+            if (cz < 1.0) continue;
+            double rx = s.x - player.x, ry = s.y - player.y;
+            double cx = rx * cosA - ry * sinA;
+            double sx = width / 2.0 + cx / cz * screenDist;
+            double sy = height / 2.0 - (s.z - player.eyeZ) / cz * screenDist + pitchShear;
+            double radius = s.radius();
+            double rpx = radius / cz * screenDist;
+            if (rpx < 0.5) continue;
+
+            int x0 = Math.max(0, (int) Math.floor(sx - rpx)), x1 = Math.min(width - 1, (int) Math.ceil(sx + rpx));
+            int y0 = Math.max(0, (int) Math.floor(sy - rpx)), y1 = Math.min(height - 1, (int) Math.ceil(sy + rpx));
+            if (x0 > x1 || y0 > y1) continue;
+
+            double alpha = s.alpha();
+            if (alpha < 0.01) continue;
+            int col = shadeColor(s.color(), shadeFactor(cz, 1.0));
+            int cr = (col >> 16) & 0xFF, cg = (col >> 8) & 0xFF, cb = col & 0xFF;
+            double inv = 1.0 / rpx;
+            // The lump noise is separable, so the row factor is computed once per row, not per pixel.
+            double[] rowLump = new double[y1 - y0 + 1];
+            for (int y = y0; y <= y1; y++) rowLump[y - y0] = 0.3 * Math.sin((y + 0.5 - sy) * inv * 3.7 + s.seed * 1.9);
+
+            for (int x = x0; x <= x1; x++) {
+                if (cz >= wallDepth[x]) continue;
+                double nu = (x + 0.5 - sx) * inv;
+                double colLump = Math.sin(nu * 4.1 + s.seed);
+                for (int y = y0; y <= y1; y++) {
+                    double nv = (y + 0.5 - sy) * inv;
+                    double d2 = nu * nu + nv * nv;
+                    if (d2 >= 1) continue;
+                    double lump = 0.7 + colLump * rowLump[y - y0];
+                    double fall = 1 - d2;
+                    double a = alpha * fall * fall * lump;
+                    if (a <= 0.004) continue;
+                    if (a > 1) a = 1;
+                    int idx = y * width + x;
+                    int dst = pixels[idx];
+                    int dr = (dst >> 16) & 0xFF, dg = (dst >> 8) & 0xFF, db = dst & 0xFF;
+                    pixels[idx] = ((int) (dr + (cr - dr) * a) << 16)
+                            | ((int) (dg + (cg - dg) * a) << 8)
+                            | (int) (db + (cb - db) * a);
+                }
+            }
+        }
     }
 
     private void renderSector(GameMap map, Player player, int secIdx, int xMin, int xMax,

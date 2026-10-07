@@ -31,6 +31,7 @@ public class Game {
     private static final double GRAVITY = 800;      // world units / second^2
     private static final double JUMP_SPEED = 260;   // world units / second, initial upward velocity
     private static final int MAX_DECALS = 400;
+    private static final int MAX_SMOKE = 700;
 
     private final GameMap map;
     private final Player player = new Player();
@@ -41,6 +42,7 @@ public class Game {
     private final Random rng = new Random();
     private final List<Projectile> projectiles = new ArrayList<>();
     private final List<Effect> effects = new ArrayList<>();
+    private final List<Smoke> smoke = new ArrayList<>();
     /** Walls in the order bullet decals were added, so the oldest hole is removed first past the cap. */
     private final ArrayDeque<Wall> decalWalls = new ArrayDeque<>();
     private double screenShake = 0;
@@ -108,7 +110,7 @@ public class Game {
                 accumulator -= dt;
             }
 
-            renderer.render(pixels, map, player, buildDynamicSprites(), buildProjectileVoxels());
+            renderer.render(pixels, map, player, buildDynamicSprites(), buildProjectileVoxels(), smoke);
 
             frames++;
             if (now - fpsTimer >= 1_000_000_000L) {
@@ -183,6 +185,7 @@ public class Game {
         player.weapons.update(dt, moving, bobFrac);
         updateProjectiles(dt);
         updateEffects(dt);
+        updateSmoke(dt);
         updatePickups();
         screenShake *= Math.exp(-dt * 6);
     }
@@ -325,6 +328,7 @@ public class Game {
         double z = player.eyeZ - 8;
         projectiles.add(new Projectile(player.x + dx * 20, player.y + dy * 20, z,
                 dx * speed, dy * speed, 0, player.sector, kind));
+        launchSmoke(kind);
     }
 
     private void spawnMeleeSwipe() {
@@ -332,9 +336,10 @@ public class Game {
         effects.add(new Effect(player.x + dx * 26, player.y + dy * 26, player.eyeZ - 10, player.sector, 0.15, Effect.Kind.SPARK));
     }
 
-    private void explode(double x, double y, double z, int sector, double blastRadius) {
+    private void explode(double x, double y, double z, int sector, boolean dev) {
+        double blastRadius = dev ? 22 : 38;
         effects.add(new Effect(x, y, z, sector, 0.5, Effect.Kind.EXPLOSION));
-        effects.add(new Effect(x, y, z, sector, 1.0, Effect.Kind.SMOKE));
+        explosionSmoke(x, y, z, sector, dev);
         scorchWalls(x, y, z, sector, blastRadius);
         double d = Math.hypot(x - player.x, y - player.y);
         if (d < 260) screenShake = Math.max(screenShake, 1.0 - d / 260);
@@ -383,7 +388,7 @@ public class Game {
             boolean hitCeil = nz >= checkSec.ceilZ - 2;
 
             if (hitWall || hitFloor || hitCeil || p.life <= 0) {
-                explode(p.x, p.y, p.z, p.sector, p.kind == Projectile.Kind.DEVASTATOR_ROCKET ? 22 : 38);
+                explode(p.x, p.y, p.z, p.sector, p.kind == Projectile.Kind.DEVASTATOR_ROCKET);
                 it.remove();
                 continue;
             }
@@ -391,15 +396,64 @@ public class Game {
 
             p.trailT -= dt;
             if (p.trailT <= 0) {
-                p.trailT = 0.025;
+                boolean dev = p.kind == Projectile.Kind.DEVASTATOR_ROCKET;
+                p.trailT = dev ? 0.015 : 0.012;
                 double speed = Math.hypot(p.vx, p.vy);
                 if (speed > 1e-6) {
                     double back = ProjectileModels.tailOffset(p.kind) + 2;
                     double tx = p.x - p.vx / speed * back, ty = p.y - p.vy / speed * back;
                     int ts = map.findSector(tx, ty, p.sector, map.sectors.get(p.sector).floorZ);
-                    if (ts >= 0) effects.add(new Effect(tx, ty, p.z, ts, 0.6, Effect.Kind.TRAIL));
+                    if (ts >= 0) {
+                        // Exhaust trail: starts small and bright, spreads into a wide, lingering grey plume.
+                        addSmoke(new Smoke(tx, ty, p.z, ts, jitter(8), jitter(8), jitter(6),
+                                dev ? 0.7 : 1.4, dev ? 1.8 : 3.0, dev ? 6 : 12,
+                                0xd8d2c8, 0x7a7774, dev ? 0.45 : 0.6, 10, rng.nextDouble() * 10));
+                    }
                 }
             }
+        }
+    }
+
+    private void updateSmoke(double dt) {
+        smoke.removeIf(s -> !s.update(dt, map));
+    }
+
+    private void addSmoke(Smoke s) {
+        smoke.add(s);
+        if (smoke.size() > MAX_SMOKE) smoke.remove(0);
+    }
+
+    private double jitter(double mag) { return (rng.nextDouble() * 2 - 1) * mag; }
+
+    /** Expanding cloud of dark puffs flung outward from a blast, which then slow, rise, and thin out. */
+    private void explosionSmoke(double x, double y, double z, int sector, boolean dev) {
+        int count = dev ? 5 : 12;
+        for (int i = 0; i < count; i++) {
+            double ang = rng.nextDouble() * Math.PI * 2;
+            double speed = (dev ? 40 : 70) + rng.nextDouble() * (dev ? 40 : 80);
+            addSmoke(new Smoke(x + jitter(4), y + jitter(4), z + jitter(4), sector,
+                    Math.sin(ang) * speed, Math.cos(ang) * speed, jitter(30) + 15,
+                    (dev ? 1.2 : 2.0) + rng.nextDouble() * 0.8,
+                    dev ? 4 : 7, (dev ? 14 : 28) + rng.nextDouble() * 8,
+                    0x2e2b28, 0x6a6662, dev ? 0.6 : 0.75, 22, rng.nextDouble() * 10));
+        }
+    }
+
+    /** Back-blast puffs at the launcher when a rocket leaves the tube. */
+    private void launchSmoke(Projectile.Kind kind) {
+        boolean dev = kind == Projectile.Kind.DEVASTATOR_ROCKET;
+        double fx = player.forwardX(), fy = player.forwardY();
+        int count = dev ? 1 : 4;
+        for (int i = 0; i < count; i++) {
+            double d = 22 + rng.nextDouble() * 10;
+            double px = player.x + fx * d + player.rightX() * 4, py = player.y + fy * d + player.rightY() * 4;
+            int s = map.findSector(px, py, player.sector, map.sectors.get(player.sector).floorZ);
+            if (s < 0) continue;
+            double drift = 30 + rng.nextDouble() * 30;
+            addSmoke(new Smoke(px, py, player.eyeZ - 10 + jitter(2), s,
+                    fx * drift + jitter(12), fy * drift + jitter(12), jitter(8) + 6,
+                    dev ? 0.5 : 0.9, dev ? 2 : 3, dev ? 6 : 12,
+                    0xcfcac2, 0x8a8682, dev ? 0.35 : 0.5, 12, rng.nextDouble() * 10));
         }
     }
 
@@ -447,14 +501,6 @@ public class Game {
                 case EXPLOSION:
                     color = lerpColor(0xffffcc, 0xff5500, t);
                     scale = lerp(0.3, 1.6, t);
-                    break;
-                case SMOKE:
-                    color = Textures.darken(0x555555, 1.0 - t * 0.6);
-                    scale = lerp(0.6, 1.4, t);
-                    break;
-                case TRAIL:
-                    color = lerpColor(0xb0aaa0, 0x4a4a4a, t);
-                    scale = lerp(0.07, 0.22, t);
                     break;
                 default: // SPARK
                     color = lerpColor(0xffffee, 0xff8800, t);
