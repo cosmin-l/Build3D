@@ -8,6 +8,8 @@ public class Wall {
     public final int color;
     /** Procedural wall texture id, or -1 for a flat color. */
     public final int textureId;
+    /** Bullet holes on this wall's front face; capped globally by Game. */
+    public final java.util.List<Decal> decals = new java.util.ArrayList<>();
 
     public Wall(double x1, double y1, double x2, double y2, int portal, int color, int textureId) {
         this.x1 = x1;

@@ -12,6 +12,7 @@ import java.awt.event.MouseEvent;
 import java.awt.image.BufferStrategy;
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferInt;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
@@ -29,6 +30,7 @@ public class Game {
     private static final double TURN_SPEED = 2.2;   // radians / second, keyboard turning
     private static final double GRAVITY = 800;      // world units / second^2
     private static final double JUMP_SPEED = 260;   // world units / second, initial upward velocity
+    private static final int MAX_DECALS = 400;
 
     private final GameMap map;
     private final Player player = new Player();
@@ -39,6 +41,8 @@ public class Game {
     private final Random rng = new Random();
     private final List<Projectile> projectiles = new ArrayList<>();
     private final List<Effect> effects = new ArrayList<>();
+    /** Walls in the order bullet decals were added, so the oldest hole is removed first past the cap. */
+    private final ArrayDeque<Wall> decalWalls = new ArrayDeque<>();
     private double screenShake = 0;
 
     private JFrame window;
@@ -261,10 +265,55 @@ public class Game {
     }
 
     private void fireHitscan(double spreadDeg) {
-        double spread = Math.toRadians(spreadDeg) * (rng.nextDouble() * 2 - 1);
-        double ang = player.angle + spread;
+        double maxSpread = Math.toRadians(spreadDeg);
+        double ang = player.angle + maxSpread * (rng.nextDouble() * 2 - 1);
         GameMap.RaycastHit hit = map.raycast(player.x, player.y, player.sector, ang, 1400);
-        effects.add(new Effect(hit.x, hit.y, player.eyeZ - 4, hit.sector, 0.18, Effect.Kind.SPARK));
+        double dirX = Math.sin(ang), dirY = Math.cos(ang);
+
+        // Exact wall the ray left the map through (raycast only gives a point within one step of it).
+        Wall hitWall = null;
+        double bestT = Double.POSITIVE_INFINITY;
+        if (hit.sector >= 0 && hit.sector < map.sectors.size()) {
+            for (Wall w : map.sectors.get(hit.sector).walls) {
+                if (w.portal >= 0) continue;
+                double t = rayWallT(player.x, player.y, dirX, dirY, w);
+                if (t > 0 && Math.abs(t - hit.dist) < Math.abs(bestT - hit.dist)) {
+                    bestT = t;
+                    hitWall = w;
+                }
+            }
+        }
+        double dist = hitWall != null ? bestT : hit.dist;
+        double ix = player.x + dirX * dist, iy = player.y + dirY * dist;
+
+        // The crosshair ray climbs by `pitch` world units per unit of distance (the
+        // Build-style y-shear); vertical spread is a bit tighter than horizontal.
+        double z = player.eyeZ + dist * (player.pitch + Math.tan(maxSpread * 0.6 * (rng.nextDouble() * 2 - 1)));
+        Sector sec = map.sectors.get(hit.sector);
+        boolean onWall = hitWall != null && z > sec.floorZ + 1 && z < sec.ceilZ - 1;
+        if (onWall) addDecal(hitWall, ix, iy, z);
+
+        double sz = Math.max(sec.floorZ + 2, Math.min(sec.ceilZ - 2, z));
+        // Pull the spark back off the surface so it isn't clipped by the wall it hit.
+        effects.add(new Effect(ix - dirX * 2, iy - dirY * 2, sz - 3, hit.sector, 0.18, Effect.Kind.SPARK));
+    }
+
+    /** Distance along the ray (ox,oy)+t*(dx,dy) where it crosses wall w, or -1 if it misses. */
+    private static double rayWallT(double ox, double oy, double dx, double dy, Wall w) {
+        double ex = w.x2 - w.x1, ey = w.y2 - w.y1;
+        double denom = dx * ey - dy * ex;
+        if (Math.abs(denom) < 1e-9) return -1;
+        double qx = w.x1 - ox, qy = w.y1 - oy;
+        double t = (qx * ey - qy * ex) / denom;
+        double s = (qx * dy - qy * dx) / denom;
+        return (s >= 0 && s <= 1) ? t : -1;
+    }
+
+    private void addDecal(Wall w, double ix, double iy, double z) {
+        double u = Math.hypot(ix - w.x1, iy - w.y1);
+        w.decals.add(new Decal(u, z, rng.nextDouble() * Math.PI * 2));
+        decalWalls.addLast(w);
+        if (decalWalls.size() > MAX_DECALS) decalWalls.removeFirst().decals.remove(0);
     }
 
     private void spawnProjectile(Projectile.Kind kind, double speed) {
@@ -455,6 +504,7 @@ public class Game {
             g2.drawImage(frame, 0, 0, WINDOW_W, WINDOW_H, null);
 
             weaponRenderer.drawViewmodel(g2, WINDOW_W, WINDOW_H, player.weapons);
+            weaponRenderer.drawCrosshair(g2, WINDOW_W, WINDOW_H);
             weaponRenderer.drawHud(g2, WINDOW_W, WINDOW_H, player.weapons);
 
             g2.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 14));

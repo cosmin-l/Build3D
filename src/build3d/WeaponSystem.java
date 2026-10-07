@@ -15,7 +15,7 @@ import java.util.Set;
 public class WeaponSystem {
     public WeaponType current = WeaponType.PISTOL;
     public final Map<WeaponType, Integer> ammo = new EnumMap<>(WeaponType.class);
-    public final Set<WeaponType> owned = EnumSet.of(WeaponType.FOOT, WeaponType.PISTOL);
+    public final Set<WeaponType> owned = EnumSet.allOf(WeaponType.class);
 
     /** Non-null while lowering toward a switch; becomes {@code current} once fully down. */
     private WeaponType switchTarget = null;
@@ -36,9 +36,8 @@ public class WeaponSystem {
     public double messageT = 0;
 
     public WeaponSystem() {
-        for (WeaponType w : WeaponType.values()) ammo.put(w, 0);
-        ammo.put(WeaponType.FOOT, Integer.MAX_VALUE);
-        ammo.put(WeaponType.PISTOL, 48);
+        // Start with the full arsenal, fully stocked.
+        for (WeaponType w : WeaponType.values()) ammo.put(w, w.ammoMax);
     }
 
     public int ammo(WeaponType w) { return ammo.getOrDefault(w, 0); }

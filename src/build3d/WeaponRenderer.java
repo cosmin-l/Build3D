@@ -140,6 +140,22 @@ public class WeaponRenderer {
         g2.drawImage(img, (int) Math.round(cx - iw / 2.0), (int) Math.round(bottomY - ih), iw, ih, null);
     }
 
+    /** Classic "+" crosshair at screen center, with a dark outline so it stays visible on any background. */
+    public void drawCrosshair(Graphics2D g2, int w, int h) {
+        int cx = w / 2, cy = h / 2;
+        int gap = 3, len = 7, t = 2;
+        int[][] arms = {
+                { cx - gap - len, cy - t / 2, len, t },  // left
+                { cx + gap + 1,   cy - t / 2, len, t },  // right
+                { cx - t / 2, cy - gap - len, t, len },  // top
+                { cx - t / 2, cy + gap + 1,   t, len },  // bottom
+        };
+        g2.setColor(new Color(0, 0, 0, 170));
+        for (int[] a : arms) g2.fillRect(a[0] - 1, a[1] - 1, a[2] + 2, a[3] + 2);
+        g2.setColor(new Color(120, 255, 120, 230));
+        for (int[] a : arms) g2.fillRect(a[0], a[1], a[2], a[3]);
+    }
+
     public void drawHud(Graphics2D g2, int w, int h, WeaponSystem ws) {
         Object oldHint = g2.getRenderingHint(RenderingHints.KEY_ANTIALIASING);
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
