@@ -311,7 +311,11 @@ public class Game {
 
     private void addDecal(Wall w, double ix, double iy, double z) {
         double u = Math.hypot(ix - w.x1, iy - w.y1);
-        w.decals.add(new Decal(u, z, rng.nextDouble() * Math.PI * 2));
+        addDecal(w, Decal.bullet(u, z, rng.nextDouble() * Math.PI * 2));
+    }
+
+    private void addDecal(Wall w, Decal decal) {
+        w.decals.add(decal);
         decalWalls.addLast(w);
         if (decalWalls.size() > MAX_DECALS) decalWalls.removeFirst().decals.remove(0);
     }
@@ -328,11 +332,41 @@ public class Game {
         effects.add(new Effect(player.x + dx * 26, player.y + dy * 26, player.eyeZ - 10, player.sector, 0.15, Effect.Kind.SPARK));
     }
 
-    private void explode(double x, double y, double z, int sector) {
+    private void explode(double x, double y, double z, int sector, double blastRadius) {
         effects.add(new Effect(x, y, z, sector, 0.5, Effect.Kind.EXPLOSION));
         effects.add(new Effect(x, y, z, sector, 1.0, Effect.Kind.SMOKE));
+        scorchWalls(x, y, z, sector, blastRadius);
         double d = Math.hypot(x - player.x, y - player.y);
         if (d < 260) screenShake = Math.max(screenShake, 1.0 - d / 260);
+    }
+
+    /**
+     * Treats the blast as a sphere and scorches every solid wall it touches in
+     * the explosion's sector and the sectors directly through its portals: each
+     * wall gets a soot blotch centered on its closest point to the blast, sized
+     * by the sphere's cross-section where it meets the wall plane.
+     */
+    private void scorchWalls(double x, double y, double z, int sector, double blastRadius) {
+        if (sector < 0 || sector >= map.sectors.size()) return;
+        List<Sector> nearby = new ArrayList<>();
+        Sector home = map.sectors.get(sector);
+        nearby.add(home);
+        for (Wall w : home.walls) {
+            if (w.portal >= 0 && w.portal < map.sectors.size()) nearby.add(map.sectors.get(w.portal));
+        }
+        for (Sector s : nearby) {
+            for (Wall w : s.walls) {
+                if (w.portal >= 0) continue;
+                double[] c = closest(w, x, y);
+                double dist = Math.hypot(x - c[0], y - c[1]);
+                if (dist >= blastRadius) continue;
+                double r = Math.sqrt(blastRadius * blastRadius - dist * dist) * 0.85;
+                if (r < 5) continue;
+                double u = Math.hypot(c[0] - w.x1, c[1] - w.y1);
+                // z + 10: vertical middle of the rocket billboard (base z - 4, ~29 units tall)
+                addDecal(w, Decal.scorch(u, z + 10, r, rng.nextDouble() * Math.PI * 2));
+            }
+        }
     }
 
     private void updateProjectiles(double dt) {
@@ -350,7 +384,7 @@ public class Game {
             boolean hitCeil = nz >= checkSec.ceilZ - 2;
 
             if (hitWall || hitFloor || hitCeil || p.life <= 0) {
-                explode(p.x, p.y, p.z, p.sector);
+                explode(p.x, p.y, p.z, p.sector, p.kind == Projectile.Kind.DEVASTATOR_ROCKET ? 22 : 38);
                 it.remove();
                 continue;
             }

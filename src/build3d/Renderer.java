@@ -191,14 +191,14 @@ public class Renderer {
         y1 = Math.min(height, y1);
         boolean decalsInColumn = false;
         for (Decal d : w.decals) {
-            if (Math.abs(u - d.u) < Decal.RADIUS) { decalsInColumn = true; break; }
+            if (Math.abs(u - d.u) < d.radius) { decalsInColumn = true; break; }
         }
         for (int y = y0; y < y1; y++) {
             double worldZ = eyeZ - (y - height / 2.0 - pitchShear) * camZ / screenDist;
             int color = w.textureId >= 0 ? Textures.sampleWall(w.textureId, u, worldZ, w.color) : w.color;
             if (decalsInColumn) {
                 for (Decal d : w.decals) {
-                    if (Math.abs(u - d.u) >= Decal.RADIUS) continue;
+                    if (Math.abs(u - d.u) >= d.radius) continue;
                     int marked = d.apply(u, worldZ, color);
                     if (marked >= 0) color = marked;
                 }
