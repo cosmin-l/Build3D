@@ -9,6 +9,8 @@ public class Projectile {
     public int sector;
     public final Kind kind;
     public double life;
+    /** Seconds until the next smoke-trail puff. */
+    public double trailT = 0;
 
     public Projectile(double x, double y, double z, double vx, double vy, double vz, int sector, Kind kind) {
         this.x = x;

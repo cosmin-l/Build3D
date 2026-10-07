@@ -108,7 +108,7 @@ public class Game {
                 accumulator -= dt;
             }
 
-            renderer.render(pixels, map, player, buildDynamicSprites());
+            renderer.render(pixels, map, player, buildDynamicSprites(), buildProjectileVoxels());
 
             frames++;
             if (now - fpsTimer >= 1_000_000_000L) {
@@ -363,8 +363,7 @@ public class Game {
                 double r = Math.sqrt(blastRadius * blastRadius - dist * dist) * 0.85;
                 if (r < 5) continue;
                 double u = Math.hypot(c[0] - w.x1, c[1] - w.y1);
-                // z + 10: vertical middle of the rocket billboard (base z - 4, ~29 units tall)
-                addDecal(w, Decal.scorch(u, z + 10, r, rng.nextDouble() * Math.PI * 2));
+                addDecal(w, Decal.scorch(u, z, r, rng.nextDouble() * Math.PI * 2));
             }
         }
     }
@@ -389,7 +388,32 @@ public class Game {
                 continue;
             }
             p.x = nx; p.y = ny; p.z = nz; p.sector = newSector;
+
+            p.trailT -= dt;
+            if (p.trailT <= 0) {
+                p.trailT = 0.025;
+                double speed = Math.hypot(p.vx, p.vy);
+                if (speed > 1e-6) {
+                    double back = ProjectileModels.tailOffset(p.kind) + 2;
+                    double tx = p.x - p.vx / speed * back, ty = p.y - p.vy / speed * back;
+                    int ts = map.findSector(tx, ty, p.sector, map.sectors.get(p.sector).floorZ);
+                    if (ts >= 0) effects.add(new Effect(tx, ty, p.z, ts, 0.6, Effect.Kind.TRAIL));
+                }
+            }
         }
+    }
+
+    /** Each in-flight rocket as a voxel model pointed along its velocity, exhaust flame flickering per frame. */
+    private List<VoxelSprite> buildProjectileVoxels() {
+        List<VoxelSprite> list = new ArrayList<>();
+        for (Projectile p : projectiles) {
+            int frame = (int) (p.life * 30) + System.identityHashCode(p);
+            VoxelModel m = ProjectileModels.frame(p.kind, frame);
+            double yaw = -Math.atan2(p.vx, p.vy);
+            double baseZ = p.z - m.sizeZ * m.voxelSize / 2.0; // model is built up from its base; center it on p.z
+            list.add(new VoxelSprite(p.x, p.y, p.sector, baseZ, yaw, 1.0, m));
+        }
+        return list;
     }
 
     private void updateEffects(double dt) {
@@ -415,10 +439,6 @@ public class Game {
 
     private List<Sprite> buildDynamicSprites() {
         List<Sprite> list = new ArrayList<>();
-        for (Projectile p : projectiles) {
-            int color = p.kind == Projectile.Kind.DEVASTATOR_ROCKET ? 0xd0d0d0 : 0x4a6b2a;
-            list.add(new Sprite(p.x, p.y, p.sector, p.z - 4, color, 0.45));
-        }
         for (Effect e : effects) {
             double t = e.progress();
             int color;
@@ -431,6 +451,10 @@ public class Game {
                 case SMOKE:
                     color = Textures.darken(0x555555, 1.0 - t * 0.6);
                     scale = lerp(0.6, 1.4, t);
+                    break;
+                case TRAIL:
+                    color = lerpColor(0xb0aaa0, 0x4a4a4a, t);
+                    scale = lerp(0.07, 0.22, t);
                     break;
                 default: // SPARK
                     color = lerpColor(0xffffee, 0xff8800, t);

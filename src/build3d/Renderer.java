@@ -46,7 +46,8 @@ public class Renderer {
         this.dirY = new double[width];
     }
 
-    public void render(int[] pixels, GameMap map, Player player, List<Sprite> extraSprites) {
+    public void render(int[] pixels, GameMap map, Player player, List<Sprite> extraSprites,
+                       List<VoxelSprite> extraVoxels) {
         this.pixels = pixels;
         java.util.Arrays.fill(pixels, 0x05050a);
         java.util.Arrays.fill(topOpen, 0);
@@ -70,7 +71,9 @@ public class Renderer {
             allSprites.addAll(extraSprites);
         }
         renderSprites(allSprites, player, pitchShear);
-        renderVoxelSprites(map, player, pitchShear);
+        List<VoxelSprite> allVoxels = new ArrayList<>(map.voxelSprites);
+        if (extraVoxels != null) allVoxels.addAll(extraVoxels);
+        renderVoxelSprites(allVoxels, player, pitchShear);
 
         if (minimapOn) drawMinimap(map, player);
     }
@@ -318,10 +321,21 @@ public class Renderer {
      * the wallDepth buffer. Cheap and gives correct parallax/self-occlusion
      * for the small prop-sized models this engine expects.
      */
-    private void renderVoxelSprites(GameMap map, Player player, double pitchShear) {
+    private void renderVoxelSprites(List<VoxelSprite> voxelSprites, Player player, double pitchShear) {
         double cosA = Math.cos(player.angle), sinA = Math.sin(player.angle);
 
-        for (VoxelSprite vs : map.voxelSprites) {
+        // Far-to-near so nearer models paint over farther ones (each model also sorts its own voxels).
+        double[] depth = new double[voxelSprites.size()];
+        Integer[] spriteOrder = new Integer[voxelSprites.size()];
+        for (int i = 0; i < voxelSprites.size(); i++) {
+            VoxelSprite v = voxelSprites.get(i);
+            depth[i] = (v.x - player.x) * sinA + (v.y - player.y) * cosA;
+            spriteOrder[i] = i;
+        }
+        java.util.Arrays.sort(spriteOrder, (a, b) -> Double.compare(depth[b], depth[a]));
+
+        for (int si : spriteOrder) {
+            VoxelSprite vs = voxelSprites.get(si);
             double ddx = vs.x - player.x, ddy = vs.y - player.y;
             if (ddx * ddx + ddy * ddy > FOG_DIST * FOG_DIST) continue;
 
